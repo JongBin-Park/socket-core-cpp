@@ -14,6 +14,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/select.h>
 // Logger header
 #include "logger.h"
 // Definition
@@ -26,7 +27,7 @@ typedef struct Packet_t
     unsigned char data[];
 } Packet;
 typedef std::function<void(int, unsigned char*, void*)> ReceiveCallback;
-typedef std::function<void(int, void*)> DisconCallback;
+typedef std::function<void(char *, void*)> DisconCallback;
 
 class Server
 {
@@ -38,7 +39,6 @@ private:
     struct sockaddr_in m_address;
     int m_port;
     unsigned int m_maxfd;
-    struct timeval m_tv;
     fd_set m_readfds;
     std::vector<std::pair<int*, char*>> m_clientList;
     ReceiveCallback m_rcvCallback;
@@ -78,7 +78,6 @@ private:
     struct sockaddr_in m_address;
     int m_port;
     unsigned int m_maxfd;
-    struct timeval m_tv;
     fd_set m_readfds;
 
     ReceiveCallback m_rcvCallback;
@@ -93,6 +92,8 @@ public:
 
     bool conn(std::string ip, int port, ReceiveCallback rcvCallback, DisconCallback disconCallback, void *userData);
     bool disconn();
+
+    unsigned long long sendTo(unsigned char *data, unsigned long long size);
 };
 
 #endif /* __SOCKET_H__ */

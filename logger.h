@@ -19,8 +19,6 @@ class Logger
 private:
     LogLevel m_level;
 
-    std::time_t getNow();
-
 public:
     Logger(LogLevel level = LOG_LEVEL_INFO) : m_level(level) {}
     ~Logger() {}
