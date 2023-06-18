@@ -6,9 +6,9 @@
 #include <vector>
 #include <functional>
 #include <thread>
+#include <mutex>
 #include <chrono>
 #include <utility>
-#include <mutex>
 // POSIX socket header
 #include <unistd.h>
 #include <sys/socket.h>
@@ -28,6 +28,18 @@ typedef struct Packet_t
 } Packet;
 typedef std::function<void(int, unsigned char*, void*)> ReceiveCallback;
 typedef std::function<void(char *, void*)> DisconCallback;
+typedef struct ClientInfo_t
+{
+    unsigned int socket;
+    char ipAddress[20];
+
+    ClientInfo_t(unsigned int fd, char *ip)
+    {
+        socket = fd;
+        memset(ipAddress, 0, 20);
+        memcpy(ipAddress, ip, 20);
+    }
+} ClientInfo;
 
 class Server
 {
@@ -35,21 +47,21 @@ private:
     void _init();
     Logger m_logger;
     bool m_isRunning;
-    int m_socket;
+    unsigned int m_socket;
     struct sockaddr_in m_address;
     int m_port;
     unsigned int m_maxfd;
     fd_set m_readfds;
-    std::vector<std::pair<int*, char*>> m_clientList;
+    unsigned long long m_clientCount;
+    std::vector<ClientInfo> m_clientList; //! critical section
     ReceiveCallback m_rcvCallback;
     DisconCallback m_disconCallback;
     void *m_userData;
-    std::thread *m_acceptTh;
     std::thread *m_rcvTh;
     std::mutex m_mutex;
 
-    static void _acceptThread(Server *obj);
     static void _receiveThread(Server *obj);
+    static void _getClientIpAddress(int fd, char *ret);
 
     unsigned long long _send(std::string ip, unsigned char *data, unsigned long long size);
 public:
@@ -74,7 +86,7 @@ private:
     std::string m_ip;
     Logger m_logger;
     bool m_isConnected;
-    int m_socket;
+    unsigned int m_socket;
     struct sockaddr_in m_address;
     int m_port;
     unsigned int m_maxfd;

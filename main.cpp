@@ -2,6 +2,8 @@
 #include <fstream>
 #include <sys/unistd.h>
 #include "tcp.h"
+#include <fmt/format.h>
+#define PORT 2341
 
 void onReceive(int size, unsigned char *data, void *userData)
 {
@@ -15,13 +17,16 @@ void onReceive(int size, unsigned char *data, void *userData)
         file.write((char*)data, size);
     }
     else
-        std::cout << "Client Receive" << std::endl;
+    {
+        std::cout << "Client Receive size:" << size << std::endl;
+        file.write((char*)data, size);
+    }
 
     file.close();
     return;
 }
 
-void onDisconn(char *ip, void *userData)
+void onDisconn(const char *ip, void *userData)
 {
     int separator = *(int*)userData;
 
@@ -37,16 +42,16 @@ int main()
 {
     int srv = 123;
     Server server;
-    server.setPort(2935);
+    server.setPort(PORT);
     server.start(onReceive, onDisconn, &srv);
 
     getchar();
 
     int cli = 456;
     Client client;
-    // client.conn("127.0.0.1", 2932, onReceive, onDisconn, &cli);
 
-    //* 파일전송 완료
+    //// 파일전송 완료
+    // client.conn("127.0.0.1", PORT, onReceive, onDisconn, &cli);
     // std::ifstream file;
     // file.open("SSMS-Setup-KOR.exe", std::ios::binary);
     // file.seekg(0, std::ios::end);
@@ -58,27 +63,19 @@ int main()
     // file.close();
     // while(getchar() != 'x')
     // {
+    //     // server.sendToAll(pf, size);
     //     client.sendTo(pf, size);
     // }
+    // delete[] pf;
 
-    //? 클라이언트 연결/끊기 무한 반복
-    for(int i=0; i<1000000; i++)
-    {
-        getchar();
-        client.conn("127.0.0.1", 2935, onReceive, onDisconn, &cli);
-        client.disconn();
-    }
-
-
-    //? 같은 스레드에서 락 두 번 걸면 털림?
-    // 정상 동작하는데? 데드락걸림
+    //// 클라이언트 연결/끊기 무한 반복
+    // // while(getchar() != 'x')
+    // while(true)
+    // {
+    //     client.conn("127.0.0.1", PORT, onReceive, onDisconn, &cli);
+    //     client.disconn();
+    //     usleep(1000);
+    // }
     
-    //? 같은 스레드에서 락 없이 언락하면 털림?
-    // 안털림
-    
-    //? cond wait에서 락걸고 진행중인데 또 락걸면 털림?
-    // 안털림
-    
-    //* VC++ 에서 이중 락 체크해 주는 것이었음
     return 0;
 }

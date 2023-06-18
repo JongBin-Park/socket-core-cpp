@@ -8,11 +8,11 @@ void Server::_init()
     m_rcvCallback = nullptr;
     m_disconCallback = nullptr;
     m_userData = nullptr;
-    m_acceptTh = nullptr;
     m_rcvTh = nullptr;
     m_logger.setLevel(LOG_LEVEL_DEBUG);
 
     m_maxfd = 0;
+    m_clientCount = 0;
     FD_ZERO(&m_readfds);
 
     return;
@@ -30,144 +30,125 @@ Server::~Server()
     _init();
 }
 
-void Server::_acceptThread(Server *obj)
-{
-    fd_set fd;
-    struct timeval tv;
-    int *clientSock = nullptr;
-    struct sockaddr_in clientAddress;
-    unsigned int addrLenth;
-    char *clientIP = nullptr;
-
-    while(obj->m_isRunning)
-    {
-        fd = obj->m_readfds;
-        tv.tv_sec = 3;
-        tv.tv_usec = 1000 * 10;
-
-        if(select(obj->m_maxfd + 1, &fd, NULL, NULL, &tv) == 0) continue;
-        obj->m_logger.debug("1");
-        if(FD_ISSET(obj->m_socket, &fd))
-        {
-            obj->m_logger.debug("2");
-            clientSock = new int;
-            clientIP = new char[20];
-            memset(clientIP, 0, 20);
-            *clientSock = accept(obj->m_socket, (sockaddr *)&clientAddress, &addrLenth);
-            obj->m_logger.debug("3");
-            //? 처음 연결된 클라이언트는 무조건 0.0.0.0 으로 표기됨
-            inet_ntop(PF_INET, &(clientAddress.sin_addr), clientIP, 20);
-            FD_SET(*clientSock, &obj->m_readfds);
-            obj->m_maxfd = *clientSock;
-            obj->m_logger.debug("4");
-
-            obj->m_clientList.emplace_back(clientSock, clientIP);
-            obj->m_logger.info("connect client [IP:{} [con:{}]]", clientIP, obj->m_clientList.size());
-        }
-
-    }
-    if(clientSock != nullptr)
-    {
-        delete clientSock;
-        clientSock = nullptr;
-    }
-    if(clientIP != nullptr)
-    {
-        delete clientIP;
-        clientIP = nullptr;
-    }
-    obj->m_logger.info("finished accept thread");
-    return;
-}
-
 void Server::setPort(int port)
 {
     m_port = port;
     m_logger.info("set port {}", port);
 }
 
+void Server::_getClientIpAddress(int fd, char *ret)
+{
+    if(ret == nullptr)
+        return;
+    
+    struct sockaddr_in addr;
+    socklen_t addr_size = sizeof(struct sockaddr_in);
+    getpeername(fd, (sockaddr*)&addr, &addr_size);
+    memset(ret, 0, 20);
+    memcpy(ret, inet_ntoa(addr.sin_addr), 20);
+}
+
 void Server::_receiveThread(Server *obj)
 {
     fd_set fd;
     struct timeval tv;
-    int clientSocket = -1;
-    std::string clientIP;
+    int fdNum = -1;
+    
+    struct sockaddr_in clientAddress;
+    unsigned int addrLenth;
+    
+    unsigned int clientSocket = -1;
+    char clientIP[20];
     int receiveSize = -1;
     ReceiveCallback receiveCallback = obj->m_rcvCallback;
     DisconCallback disconCallback = obj->m_disconCallback;
     Packet *packet = (Packet*)new unsigned char[__BUFFER_SIZE];
     unsigned char *data = nullptr;
-    bool isDeleted = false;
 
     while(obj->m_isRunning)
     {
         fd = obj->m_readfds;
         tv.tv_sec = 3;
-        tv.tv_usec = 1000 * 10;
-        int fdnum = 0;
-        if((fdnum=select(obj->m_maxfd + 1, &fd, NULL, NULL, &tv)) == 0);
-        obj->m_logger.debug("5 {}", fdnum);
-        for(auto iter = obj->m_clientList.begin(); iter != obj->m_clientList.end();)
+        tv.tv_usec = 0;
+
+        fdNum = select(obj->m_maxfd + 1, &fd, NULL, NULL, &tv);
+        if(fdNum == -1) break;
+        else if(fdNum == 0) continue;
+
+        for(unsigned int i=0; i<obj->m_maxfd + 1; i++)
         {
-            obj->m_logger.debug("6");
-            isDeleted = false;
-            clientSocket = *(iter->first);
-            clientIP = iter->second;
-            if(FD_ISSET(clientSocket, &fd))
+            if(FD_ISSET(i, &fd))
             {
-                do
+                if(i == obj->m_socket)
                 {
-                    obj->m_logger.debug("7");
-                    receiveSize = recv(clientSocket, packet, __BUFFER_SIZE, MSG_PEEK);
-                    if(receiveSize <= 0)
+                    clientSocket = accept(obj->m_socket, (sockaddr *)&clientAddress, &addrLenth);
+                    if(clientSocket > 0)
                     {
-                        obj->m_logger.debug("8");
-                        obj->m_logger.warn("client was disconnected [IP:{}]", clientIP);
-                        if(disconCallback)
-                            disconCallback(iter->second, obj->m_userData);
-                        obj->m_logger.debug("9");
-                        FD_CLR(clientSocket, &obj->m_readfds);
-                        close(clientSocket);
-                        delete iter->first;
-                        delete[] iter->second;
-                        iter = obj->m_clientList.erase(iter);
-                        obj->m_logger.debug("10");
-                        if(data != nullptr)
-                        {
-                            delete[] data;
-                            data = nullptr;
-                        }
-                        obj->m_logger.debug("11");
-                        isDeleted = true;
-                        break;
+                        _getClientIpAddress(clientSocket, clientIP);
+                        FD_SET(clientSocket, &obj->m_readfds);
+                        if(obj->m_maxfd < clientSocket) obj->m_maxfd = clientSocket;
+                        obj->m_mutex.lock();
+                        obj->m_clientList.emplace_back(clientSocket, clientIP);
+                        obj->m_mutex.unlock();
+                        obj->m_logger.debug("client is connected [IP:{} cur con:{}]", clientIP, ++obj->m_clientCount);
                     }
-                    else if(receiveSize >= __BUFFER_SIZE)
+                }
+                else
+                {
+                    clientSocket = i;
+                    do
                     {
-                        recv(clientSocket, packet, __BUFFER_SIZE, 0);
-                        
-                        if(packet->accumulatedSize == packet->currentSize)
-                            data = new unsigned char[packet->totalSize];
-
-                        if(data != nullptr)
-                            memcpy(data + packet->accumulatedSize - packet->currentSize, packet->data, packet->currentSize);
-
-                        if(packet->totalSize == packet->accumulatedSize)
+                        receiveSize = recv(clientSocket, packet, __BUFFER_SIZE, MSG_PEEK);
+                        if(receiveSize <= 0)
                         {
-                            obj->m_logger.debug("receive packet [totalSize:{}]", packet->totalSize);
-                            if(receiveCallback)
-                                receiveCallback(packet->totalSize, data, obj->m_userData);
+                            _getClientIpAddress(i, clientIP);
+                            obj->m_logger.warn("client was disconnected [IP:{} cur con:{}]", clientIP, --obj->m_clientCount);
 
+                            FD_CLR(clientSocket, &obj->m_readfds);
+                            shutdown(clientSocket, SHUT_RDWR);
+                            close(clientSocket);
+                            obj->m_mutex.lock();
+                            auto iter = std::find_if(obj->m_clientList.begin(), obj->m_clientList.end(), [&clientSocket](ClientInfo &info) {return info.socket == clientSocket;});
+                            obj->m_clientList.erase(iter);
+                            obj->m_mutex.unlock();
+                                
                             if(data != nullptr)
                             {
                                 delete[] data;
                                 data = nullptr;
                             }
+
+                            if(disconCallback)
+                                disconCallback(clientIP, obj->m_userData);
+
+                            break;
                         }
-                    }
-                } while (packet->accumulatedSize < packet->totalSize);
+                        else if(receiveSize >= __BUFFER_SIZE)
+                        {
+                            recv(clientSocket, packet, __BUFFER_SIZE, 0);
+                            
+                            if(packet->accumulatedSize == packet->currentSize)
+                                data = new unsigned char[packet->totalSize];
+
+                            if(data != nullptr)
+                                memcpy(data + packet->accumulatedSize - packet->currentSize, packet->data, packet->currentSize);
+
+                            if(packet->totalSize == packet->accumulatedSize)
+                            {
+                                obj->m_logger.debug("receive packet [totalSize:{}]", packet->totalSize);
+                                if(receiveCallback)
+                                    receiveCallback(packet->totalSize, data, obj->m_userData);
+
+                                if(data != nullptr)
+                                {
+                                    delete[] data;
+                                    data = nullptr;
+                                }
+                            }
+                        }
+                    } while (packet->accumulatedSize < packet->totalSize);
+                }
             }
-            if(!isDeleted)
-                iter++;
         }
     }
 
@@ -213,14 +194,14 @@ bool Server::start( ReceiveCallback rcvCallback,
     if(bind(m_socket, (sockaddr *)&m_address, sizeof(m_address)) < 0)
     {
         m_logger.error("can't bind {} port", m_port);
-        close(m_socket);
+        shutdown(m_socket, SHUT_RDWR);
         return result;
     }
 
-    if(listen(m_socket, 10) < 0)
+    if(listen(m_socket, 5) < 0)
     {
         m_logger.error("can't listen");
-        close(m_socket);
+        shutdown(m_socket, SHUT_RDWR);
         return result;
     }
 
@@ -228,8 +209,8 @@ bool Server::start( ReceiveCallback rcvCallback,
     m_maxfd = m_socket;
 
     m_isRunning = true;
-    m_acceptTh = new std::thread(&Server::_acceptThread, this);
     m_rcvTh = new std::thread(&Server::_receiveThread, this);
+    m_rcvTh->detach();
 
     result = true;
     return false;
@@ -240,16 +221,8 @@ bool Server::stop()
     m_isRunning = false;
     if(m_rcvTh != nullptr)
     {
-        m_rcvTh->join();
         delete m_rcvTh;
         m_rcvTh = nullptr;
-    }
-    
-    if(m_rcvTh != nullptr)
-    {
-        m_acceptTh->join();
-        delete m_acceptTh;
-        m_acceptTh = nullptr;
     }
 
     return false;
@@ -259,19 +232,19 @@ unsigned long long Server::_send(std::string ip, unsigned char *data, unsigned l
 {
     unsigned long long sendSize = 0;
     Packet *packet = (Packet*)new unsigned char[__BUFFER_SIZE];
-    bool isBroadcasting = true;
-
-    std::vector<std::pair<int*, char*>>::iterator selectedSock;
-    
-    if(!ip.empty())
-    {
-        isBroadcasting = false;
-        selectedSock = std::find_if(m_clientList.begin(), m_clientList.end(), [&ip](std::pair<int *, char*> &sockInfo) -> bool {
-            return strcmp(sockInfo.second, ip.c_str())==0?true:false;
-        });
-    }
+    std::vector<ClientInfo>::iterator iter;
+    int selectedSocket = -1;
 
     m_mutex.lock();
+    if(!ip.empty())
+    {
+        iter = std::find_if(m_clientList.begin(), m_clientList.end(), [&ip](ClientInfo &info) -> bool {
+            return strcmp(info.ipAddress, ip.c_str())==0;
+        });
+
+        selectedSocket = iter->socket;
+    }
+
     packet->totalSize = size;
     packet->accumulatedSize = 0;
     packet->currentSize = 0;
@@ -287,12 +260,17 @@ unsigned long long Server::_send(std::string ip, unsigned char *data, unsigned l
 
         packet->accumulatedSize += packet->currentSize;
 
-        if(isBroadcasting)
-            for(auto iter = m_clientList.begin(); iter != m_clientList.end(); iter++)
-                sendSize += send(*iter->first, &packet, __BUFFER_SIZE, 0);
+        if(ip.empty())
+        {
+            std::vector<ClientInfo>::iterator iter = m_clientList.begin();
+            while(iter!=m_clientList.end())
+            {
+                sendSize += send(iter->socket, packet, __BUFFER_SIZE, 0);
+                iter++;
+            }
+        }
         else
-            sendSize += send(*selectedSock->first, &packet, __BUFFER_SIZE, 0);
-
+            sendSize += send(selectedSocket, packet, __BUFFER_SIZE, 0);
     }
     m_mutex.unlock();
 
@@ -307,7 +285,7 @@ unsigned long long Server::sendTo(std::string ip, unsigned char *data, unsigned 
 
 unsigned long long Server::sendToAll(unsigned char *data, unsigned long long size)
 {
-    return _send(nullptr, data, size);
+    return _send("", data, size);
 }
 
 void Client::_init()
@@ -337,6 +315,7 @@ void Client::_receiveThread(Client *obj)
 {
     fd_set fd;
     struct timeval tv;
+    int fdNum = -1;
     int socket = obj->m_socket;
     int receiveSize = -1;
     ReceiveCallback receiveCallback = obj->m_rcvCallback;
@@ -348,9 +327,12 @@ void Client::_receiveThread(Client *obj)
     {
         fd = obj->m_readfds;
         tv.tv_sec = 3;
-        tv.tv_usec = 1000 * 10;
+        tv.tv_usec = 0;
 
-        if(select(obj->m_maxfd + 1, &fd, NULL, NULL, &tv) == 0) continue;
+        fdNum = select(obj->m_maxfd + 1, &fd, NULL, NULL, &tv);
+        if(fdNum == -1) break;
+        else if(fdNum == 0) continue;
+
         if(FD_ISSET(socket, &fd))
         {
             do
@@ -362,6 +344,7 @@ void Client::_receiveThread(Client *obj)
                         disconCallback(0, obj->m_userData);
 
                     obj->m_logger.warn("server was disconnected");
+                    shutdown(socket, SHUT_RDWR);
                     close(socket);
                     if(data != nullptr)
                     {
@@ -442,7 +425,7 @@ bool Client::conn(std::string ip, int port, ReceiveCallback rcvCallback, DisconC
     if(connect(m_socket, (sockaddr *)&m_address, sizeof(m_address)) < 0)
     {
         m_logger.error("can't connect server");
-        close(m_socket);
+        shutdown(m_socket, SHUT_RDWR);
 
         return result;
     }
@@ -452,6 +435,7 @@ bool Client::conn(std::string ip, int port, ReceiveCallback rcvCallback, DisconC
 
     m_isConnected = true;
     m_rcvTh = new std::thread(&Client::_receiveThread, this);
+    m_rcvTh->detach();
 
     result = true;
     return result;
@@ -464,13 +448,13 @@ bool Client::disconn()
     m_isConnected = false;
     if(m_rcvTh != nullptr)
     {
-        m_rcvTh->join();
         delete m_rcvTh;
         m_rcvTh = nullptr;
     }
 
-    close(m_socket);
     FD_CLR(m_socket, &m_readfds); 
+    shutdown(m_socket, SHUT_RDWR);
+    close(m_socket);
 
     return result;
 }
