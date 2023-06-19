@@ -39,12 +39,12 @@ void onDisconn(const char *ip, void *userData)
     if(param->isServer)
     {
         // Server side
-        logger->warn("disconnect client [IP:{}]", ip);
+        logger->warn("DISCONNCALLBACK disconnect client [IP:{}]", ip);
     }
     else
     {
         // Client side
-        logger->warn("disconnect server [IP:{}]", ip);
+        logger->warn("DISCONNCALLBACK disconnect server [IP:{}]", ip);
     }
 
     return;
@@ -90,10 +90,14 @@ int main()
     server.sendToAll((unsigned char*)"S > C", 5);
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
-    logger.info("Press 'ENTER' to exit");
-    getchar();
+    // logger.info("Press 'ENTER' to disconnect server");    
+    if(getchar() == 'x') return 0;
     client.disconn();
-    server.stop();
     
+
+    // logger.info("Press 'ENTER' to stop server");    
+    if(getchar() == 'x') return 0;
+    server.stop();
+    getchar();
     return 0;
 }

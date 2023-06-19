@@ -105,7 +105,7 @@ void Server::_receiveThread(Server *obj)
                             obj->m_logger.warn("client was disconnected [IP:{} cur con:{}]", clientIP, --obj->m_clientCount);
 
                             FD_CLR(clientSocket, &obj->m_readfds);
-                            shutdown(clientSocket, SHUT_WR);
+                            shutdown(clientSocket, SHUT_RDWR);
                             close(clientSocket);
                             obj->m_mutex.lock();
                             auto iter = std::find_if(obj->m_clientList.begin(), obj->m_clientList.end(), [&clientSocket](ClientInfo &info) {return info.socket == clientSocket;});
@@ -194,14 +194,14 @@ bool Server::start( ReceiveCallback rcvCallback,
     if(bind(m_socket, (sockaddr *)&m_address, sizeof(m_address)) < 0)
     {
         m_logger.error("can't bind {} port", m_port);
-        shutdown(m_socket, SHUT_WR);
+        shutdown(m_socket, SHUT_RDWR);
         return result;
     }
 
     if(listen(m_socket, 5) < 0)
     {
         m_logger.error("can't listen");
-        shutdown(m_socket, SHUT_WR);
+        shutdown(m_socket, SHUT_RDWR);
         return result;
     }
 
@@ -210,7 +210,7 @@ bool Server::start( ReceiveCallback rcvCallback,
 
     m_isRunning = true;
     m_rcvTh = new std::thread(&Server::_receiveThread, this);
-    m_rcvTh->detach();
+    // m_rcvTh->detach();
 
     result = true;
     return false;
@@ -221,6 +221,7 @@ bool Server::stop()
     m_isRunning = false;
     if(m_rcvTh != nullptr)
     {
+        m_rcvTh->join();
         delete m_rcvTh;
         m_rcvTh = nullptr;
     }
@@ -231,7 +232,7 @@ bool Server::stop()
         while(iter!=m_clientList.end())
         {
             FD_CLR(iter->socket, &m_readfds);
-            shutdown(iter->socket, SHUT_WR);
+            shutdown(iter->socket, SHUT_RDWR);
             close(iter->socket);
 
             iter++;
@@ -241,7 +242,7 @@ bool Server::stop()
     }
 
     FD_CLR(m_socket, &m_readfds);
-    shutdown(m_socket, SHUT_WR);
+    shutdown(m_socket, SHUT_RDWR);
     close(m_socket);
 
     return false;
@@ -374,7 +375,7 @@ void Client::_receiveThread(Client *obj)
                 {
                     _getIpAddress(socket, serverIP);
                     obj->m_logger.warn("server was disconnected");
-                    shutdown(socket, SHUT_WR);
+                    shutdown(socket, SHUT_RDWR);
                     close(socket);
                     if(data != nullptr)
                     {
@@ -458,7 +459,7 @@ bool Client::conn(std::string ip, int port, ReceiveCallback rcvCallback, DisconC
     if(connect(m_socket, (sockaddr *)&m_address, sizeof(m_address)) < 0)
     {
         m_logger.error("can't connect server");
-        shutdown(m_socket, SHUT_WR);
+        shutdown(m_socket, SHUT_RDWR);
 
         return result;
     }
@@ -468,7 +469,7 @@ bool Client::conn(std::string ip, int port, ReceiveCallback rcvCallback, DisconC
 
     m_isConnected = true;
     m_rcvTh = new std::thread(&Client::_receiveThread, this);
-    m_rcvTh->detach();
+    // m_rcvTh->detach();
 
     result = true;
     return result;
@@ -481,12 +482,13 @@ bool Client::disconn()
     m_isConnected = false;
     if(m_rcvTh != nullptr)
     {
+        m_rcvTh->join();
         delete m_rcvTh;
         m_rcvTh = nullptr;
     }
 
     FD_CLR(m_socket, &m_readfds); 
-    shutdown(m_socket, SHUT_WR);
+    shutdown(m_socket, SHUT_RDWR);
     close(m_socket);
 
     return result;
