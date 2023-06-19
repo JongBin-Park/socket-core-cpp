@@ -61,7 +61,7 @@ private:
     std::mutex m_mutex;
 
     static void _receiveThread(Server *obj);
-    static void _getClientIpAddress(int fd, char *ret);
+    static void _getIpAddress(int fd, char *ret);
 
     unsigned long long _send(std::string ip, unsigned char *data, unsigned long long size);
 public:
@@ -98,6 +98,7 @@ private:
     std::thread *m_rcvTh;
 
     static void _receiveThread(Client *obj);
+    static void _getIpAddress(int fd, char *ret);
 public:
     Client();
     ~Client();
