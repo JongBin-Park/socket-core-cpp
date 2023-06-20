@@ -90,14 +90,11 @@ int main()
     server.sendToAll((unsigned char*)"S > C", 5);
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
-    // logger.info("Press 'ENTER' to disconnect server");    
+    logger.info("Press 'ENTER' to exit");    
     if(getchar() == 'x') return 0;
-    client.disconn();
-    
 
-    // logger.info("Press 'ENTER' to stop server");    
-    if(getchar() == 'x') return 0;
+    client.disconn();
     server.stop();
-    getchar();
+    
     return 0;
 }
