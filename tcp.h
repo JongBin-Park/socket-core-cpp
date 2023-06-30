@@ -21,17 +21,18 @@
 #define __BUFFER_SIZE 1024
 typedef struct Packet_t
 {
-    unsigned long long totalSize;
-    unsigned long long accumulatedSize;
-    unsigned long long currentSize;
-    unsigned char data[];
+    unsigned long long  totalSize;
+    unsigned long long  accumulatedSize;
+    unsigned long long  currentSize;
+    unsigned char       data[];
 } Packet;
 typedef std::function<void(int, unsigned char*, void*)> ReceiveCallback;
 typedef std::function<void(char *, void*)> DisconCallback;
+typedef std::function<void(char *, void*)> AcceptCallback;
 typedef struct ClientInfo_t
 {
-    unsigned int socket;
-    char ipAddress[20];
+    unsigned int        socket;
+    char                ipAddress[20];
 
     ClientInfo_t(unsigned int fd, char *ip)
     {
@@ -44,69 +45,74 @@ typedef struct ClientInfo_t
 class Server
 {
 private:
-    void _init();
-    Logger m_logger;
-    bool m_isRunning;
-    unsigned int m_socket;
-    struct sockaddr_in m_address;
-    int m_port;
-    unsigned int m_maxfd;
-    fd_set m_readfds;
-    unsigned long long m_clientCount;
+    Logger                  m_logger;
+    bool                    m_isRunning;
+    unsigned int            m_socket;
+    struct sockaddr_in      m_address;
+    int                     m_port;
+    unsigned int            m_maxfd;
+    fd_set                  m_readfds;
+    unsigned long long      m_clientCount;
     std::vector<ClientInfo> m_clientList; //! critical section
-    ReceiveCallback m_rcvCallback;
-    DisconCallback m_disconCallback;
-    void *m_userData;
-    std::thread *m_rcvTh;
-    std::mutex m_mutex;
+    ReceiveCallback         m_rcvCallback;
+    DisconCallback          m_disconCallback;
+    AcceptCallback          m_acceptCallback;
+    void*                   m_userData;
+    std::thread*            m_rcvTh;
+    std::mutex              m_acceptingMutex;
+    std::mutex              m_sendingMutex;
 
-    static void _receiveThread(Server *obj);
-    static void _getIpAddress(int fd, char *ret);
-
-    unsigned long long _send(std::string ip, unsigned char *data, unsigned long long size);
+private:
+    void                    _init();
+    static void             _receiveThread(Server *obj);
+    static void             _getIpAddress(int fd, char *ret);
+    unsigned long long      _send(std::string ip, unsigned char *data, unsigned long long size);
 public:
     Server();
     ~Server();
 
-    void setPort(int port);
-    bool start( ReceiveCallback rcvCallback,
-                DisconCallback  disconCallback,
-                void*           userData);
+    void                    setPort(int port);
+    bool                    start( ReceiveCallback rcvCallback,
+                                   DisconCallback  disconCallback,
+                                   AcceptCallback  acceptCallback,
+                                   void*           userData);
 
-    bool stop();
-    unsigned long long sendToAll(unsigned char *data, unsigned long long size);
-    unsigned long long sendTo(std::string ip, unsigned char *data, unsigned long long size);
+    bool                    stop();
+    unsigned long long      sendToAll(unsigned char *data, unsigned long long size);
+    unsigned long long      sendTo(std::string ip, unsigned char *data, unsigned long long size);
 
 };
 
 class Client
 {
 private:
-    void _init();
-    std::string m_ip;
-    Logger m_logger;
-    bool m_isConnected;
-    unsigned int m_socket;
-    struct sockaddr_in m_address;
-    int m_port;
-    unsigned int m_maxfd;
-    fd_set m_readfds;
+    std::string         m_ip;
+    Logger              m_logger;
+    bool                m_isConnected;
+    unsigned int        m_socket;
+    struct sockaddr_in  m_address;
+    int                 m_port;
+    unsigned int        m_maxfd;
+    fd_set              m_readfds;
 
-    ReceiveCallback m_rcvCallback;
-    DisconCallback m_disconCallback;
-    void *m_userData;
-    std::thread *m_rcvTh;
+    ReceiveCallback     m_rcvCallback;
+    DisconCallback      m_disconCallback;
+    void*               m_userData;
+    std::thread*        m_rcvTh;
+    std::mutex          m_sendingMutex;
 
-    static void _receiveThread(Client *obj);
-    static void _getIpAddress(int fd, char *ret);
+private:
+    void                _init();
+    static void         _receiveThread(Client *obj);
+    static void         _getIpAddress(int fd, char *ret);
 public:
     Client();
     ~Client();
 
-    bool conn(std::string ip, int port, ReceiveCallback rcvCallback, DisconCallback disconCallback, void *userData);
-    bool disconn();
+    bool                conn(std::string ip, int port, ReceiveCallback rcvCallback, DisconCallback disconCallback, void *userData);
+    bool                disconn();
 
-    unsigned long long sendTo(unsigned char *data, unsigned long long size);
+    unsigned long long  sendTo(unsigned char *data, unsigned long long size);
 };
 
 #endif /* __SOCKET_H__ */

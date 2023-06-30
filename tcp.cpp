@@ -87,10 +87,13 @@ void Server::_receiveThread(Server *obj)
                         _getIpAddress(clientSocket, clientIP);
                         FD_SET(clientSocket, &obj->m_readfds);
                         if(obj->m_maxfd < clientSocket) obj->m_maxfd = clientSocket;
-                        obj->m_mutex.lock();
+                        obj->m_acceptingMutex.lock();
                         obj->m_clientList.emplace_back(clientSocket, clientIP);
-                        obj->m_mutex.unlock();
+                        obj->m_acceptingMutex.unlock();
                         obj->m_logger.debug("client is connected [IP:{} cur con:{}]", clientIP, ++obj->m_clientCount);
+
+                        if(obj->m_acceptCallback)
+                            obj->m_acceptCallback(clientIP, obj->m_userData);
                     }
                 }
                 else
@@ -107,10 +110,10 @@ void Server::_receiveThread(Server *obj)
                             FD_CLR(clientSocket, &obj->m_readfds);
                             shutdown(clientSocket, SHUT_RDWR);
                             close(clientSocket);
-                            obj->m_mutex.lock();
+                            obj->m_acceptingMutex.lock();
                             auto iter = std::find_if(obj->m_clientList.begin(), obj->m_clientList.end(), [&clientSocket](ClientInfo &info) {return info.socket == clientSocket;});
                             obj->m_clientList.erase(iter);
-                            obj->m_mutex.unlock();
+                            obj->m_acceptingMutex.unlock();
                                 
                             if(data != nullptr)
                             {
@@ -163,9 +166,10 @@ void Server::_receiveThread(Server *obj)
 
 bool Server::start( ReceiveCallback rcvCallback,
                     DisconCallback  disconCallback,
+                    AcceptCallback  acceptCallback,
                     void*           userData)
 {
-    if(!rcvCallback || !disconCallback)
+    if(!rcvCallback || !disconCallback || !acceptCallback)
     {
         m_logger.error("not register callback function");
         return false;
@@ -178,6 +182,7 @@ bool Server::start( ReceiveCallback rcvCallback,
     bool result = false;
     m_rcvCallback = rcvCallback;
     m_disconCallback = disconCallback;
+    m_acceptCallback = acceptCallback;
     m_userData = userData;
 
     m_socket = socket(PF_INET, SOCK_STREAM, 0);
@@ -255,12 +260,13 @@ unsigned long long Server::_send(std::string ip, unsigned char *data, unsigned l
     std::vector<ClientInfo>::iterator iter;
     int selectedSocket = -1;
 
-    m_mutex.lock();
     if(!ip.empty())
     {
+        m_acceptingMutex.lock();
         iter = std::find_if(m_clientList.begin(), m_clientList.end(), [&ip](ClientInfo &info) -> bool {
             return strcmp(info.ipAddress, ip.c_str())==0;
         });
+        m_acceptingMutex.unlock();
 
         selectedSocket = iter->socket;
     }
@@ -268,6 +274,7 @@ unsigned long long Server::_send(std::string ip, unsigned char *data, unsigned l
     packet->totalSize = size;
     packet->accumulatedSize = 0;
     packet->currentSize = 0;
+    m_sendingMutex.lock();
     while(packet->accumulatedSize < packet->totalSize)
     {
         if(packet->totalSize - packet->accumulatedSize < __BUFFER_SIZE - sizeof(Packet))
@@ -282,17 +289,19 @@ unsigned long long Server::_send(std::string ip, unsigned char *data, unsigned l
 
         if(ip.empty())
         {
+            m_acceptingMutex.lock();
             std::vector<ClientInfo>::iterator iter = m_clientList.begin();
             while(iter!=m_clientList.end())
             {
                 sendSize += send(iter->socket, packet, __BUFFER_SIZE, 0);
                 iter++;
             }
+            m_acceptingMutex.unlock();
         }
         else
             sendSize += send(selectedSocket, packet, __BUFFER_SIZE, 0);
     }
-    m_mutex.unlock();
+    m_sendingMutex.unlock();
 
     delete[] packet;
     return sendSize;
@@ -502,6 +511,7 @@ unsigned long long Client::sendTo(unsigned char *data, unsigned long long size)
     packet->totalSize = size;
     packet->accumulatedSize = 0;
     packet->currentSize = 0;
+    m_sendingMutex.lock();
     while(packet->accumulatedSize < packet->totalSize)
     {
         if(packet->totalSize - packet->accumulatedSize < __BUFFER_SIZE - sizeof(Packet))
@@ -515,7 +525,7 @@ unsigned long long Client::sendTo(unsigned char *data, unsigned long long size)
         packet->accumulatedSize += packet->currentSize;
         sendSize += send(m_socket, packet, __BUFFER_SIZE, 0);
     }
-
+    m_sendingMutex.unlock();
     delete[] packet;
     return sendSize;
 }
